@@ -1,0 +1,222 @@
+﻿(function(L, d3, satellite) {
+import * as satelliteView from 'satellite-view';
+  /* ==================================================== */
+  /* =============== CONVERSION ========================= */
+  /* ==================================================== */
+
+  function radiansToDegrees(radians) {
+    return radians * 180 / Math.PI;
+  }
+
+  function satrecToFeature(satrec, date, props) {
+    var properties = props || {};
+    var positionAndVelocity = satellite.propagate(satrec, date);
+    var gmst = satellite.gstime(date);
+    var positionGd = satellite.eciToGeodetic(positionAndVelocity.position, gmst);
+    properties.height = positionGd.height;
+    return {
+      type: 'Feature',
+      properties: properties,
+      geometry: {
+        type: 'Point',
+        coordinates: [
+          radiansToDegrees(positionGd.longitude),
+          radiansToDegrees(positionGd.latitude)
+        ]
+      }
+    };
+  }
+
+  /* =============================================== */
+  /* =============== CLOCK ========================= */
+  /* =============================================== */
+
+  /**
+   * Factory function for keeping track of elapsed time and rates.
+   */
+  function clock() {
+    var rate = 60; // 1ms elapsed : 60sec simulated
+    var date = d3.now();
+    var elapsed = 0;
+
+    function clock() {}
+  
+    clock.date = function(timeInMs) {
+      if (!arguments.length) return date + (elapsed * rate);
+      date = timeInMs;
+      return clock;
+    }
+  
+    clock.elapsed = function(ms) {
+      if (!arguments.length) return date - d3.now(); // calculates elapsed
+      elapsed = ms;
+      return clock;
+    }
+  
+    clock.rate = function(secondsPerMsElapsed) {
+      if (!arguments.length) return rate;
+      rate = secondsPerMsElapsed;
+      return clock;
+    }
+  
+    return clock;
+  }
+
+  /* ==================================================== */
+  /* =============== TLE ================================ */
+  /* ==================================================== */
+
+  /**
+   * Factory function for working with TLE.
+   */
+  function tle() {
+    var _properties;
+    var _date;
+    var _lines = function (arry) {
+      return arry.slice(0, 2);
+    };
+
+    function tle() {}
+  
+    tle.satrecs = function (tles) {
+      return tles.map(function(d) {
+        return satellite.twoline2satrec.apply(null, _lines(d));
+      });
+    }
+  
+    tle.features = function (tles) {
+      var date = _date || d3.now();
+  
+      return tles.map(function(d) {
+        var satrec = satellite.twoline2satrec.apply(null, _lines(d));
+        return satrecToFeature(satrec, date, _properties(d));
+      });
+    }
+  
+    tle.lines = function (func) {
+      if (!arguments.length) return _lines;
+      _lines = func;
+      return tle;
+    }
+  
+    tle.properties = function (func) {
+      if (!arguments.length) return _properties;
+      _properties = func;
+      return tle;
+    }
+  
+    tle.date = function (ms) {
+      if (!arguments.length) return _date;
+      _date = ms;
+      return tle;
+    }
+  
+    return tle;
+  }
+
+
+  /* ==================================================== */
+  /* =============== PARSE ============================== */
+  /* ==================================================== */
+
+  /**
+   * Parses text file string of tle into groups.
+   * @return {Array<string[]>} Like [['tle line 1', 'tle line 2'], ...]
+   */
+  function parseTle(threeleString) {
+    // remove last newline so that we can properly split all the lines
+    var lines = threeleString.replace(/\r?\n$/g, '').split(/\r?\n/);
+
+    return lines.reduce(function(acc, cur, index) {
+      if (index % 2 === 0) acc.push([]);
+      acc[acc.length - 1].push(cur);
+      return acc;
+    }, []);
+  }
+
+  /* =============================================== */
+  /* =============== LEAFLET MAP =================== */
+  /* =============================================== */
+
+  // Approximate date the tle data was aquired from https://www.space-track.org/#recent
+  var TLE_DATA_DATE = new Date(2018, 0, 26).getTime();
+
+  var leafletMap;
+  var attributionControl;
+  var activeClock;
+  var satellitesLayer;
+  var satrecs;
+
+  function init() {
+    leafletMap = L.map(document.getElementById('leaflet-map'), {
+      zoom: 2,
+      center: [20, 0],
+      worldCopyJump: true,
+      attributionControl: false,
+      layers: [L.tileLayer('http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png')]
+    });
+    attributionControl = L.control.attribution({ prefix: ''})
+      .addTo(leafletMap);
+  }
+
+  function update(parsedTles) {
+    satrecs = tle()
+      .date(TLE_DATA_DATE)
+      .satrecs(parsedTles);
+
+    activeClock = clock()
+      .rate(1000)
+      .date(TLE_DATA_DATE);
+
+    var featureCollection = {
+      type: 'FeatureCollection',
+      features: satrecs.map(function (rec) {
+        return satrecToFeature(rec, new Date(activeClock.date()));
+      })
+    };
+
+    satellitesLayer = L.geoJSON(featureCollection, {
+      pointToLayer: function(geoJsonPoint, latlng) {
+        return L.circleMarker(latlng, {
+          radius: 3,
+          stroke: false,
+          fillOpacity: 1,
+          fillColor: '#000'
+        });
+      }
+    });
+
+    leafletMap.addLayer(satellitesLayer);
+
+    window.requestAnimationFrame(draw);
+  }
+
+  function draw(elapsed) {
+    var dateInMs = activeClock.elapsed(elapsed)
+      .date();
+    var date = new Date(dateInMs);
+    satellitesLayer.clearLayers();
+    var featureCollection = {
+      type: 'FeatureCollection',
+      features: satrecs.map(function (rec) {
+        return satrecToFeature(rec, date);
+      })
+    };
+    satellitesLayer.addData(featureCollection);
+    attributionControl.setPrefix(date);
+    window.requestAnimationFrame(draw);
+  }
+
+  init();
+
+  d3.text('tles.txt')
+    .then(parseTle)
+    .then(update);
+
+}(window.L, window.d3, window.satellite));
+@INPROCEEDINGS{fsr_hinzmann_2017,
+   Author = {T. Hinzmann, J. L. Schönberger, M. Pollefeys, and R. Siegwart},
+   Title = {Mapping on the Fly: Real-time 3D Dense Reconstruction, Digital Surface Map and Incremental Orthomosaic Generation for Unmanned Aerial Vehicles},
+   Booktitle = {Field and Service Robotics - Results of the 11th International Conference},
+   Year = {2017}
+}

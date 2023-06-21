@@ -1,0 +1,50 @@
+﻿<html>
+<heaed>
+<title>Box Model</title>
+<style>
+
+.container {
+  display: flex;
+}
+
+.box {
+  width: 100px;
+  height: 100px;
+  background-color: blue;
+  margin-right: 10px;
+}
+
+.box:hover {
+  background-color: red;
+}
+
+</style>
+</head>
+<body>
+
+<h1>Sample Box Model</h1>
+
+<div class="container">
+  <div class="box"></div>
+  <div class="box"></div>
+  <div class="box"></div>
+</div>
+
+
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script>
+$(document).ready(function() {
+  var boxCount = 1;
+
+  function addBox() {
+    if (boxCount <= 7) {
+      $('.container').append('<div class="box"></div>');
+      boxCount++;
+    }
+  }
+
+  setInterval(addBox, 2000);
+});
+</script>
+</body>
+</html>
